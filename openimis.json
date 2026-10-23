@@ -24,7 +24,7 @@
         },
         {
             "name": "IndividualModule",
-            "npm": "@openimis/fe-individual@https://github.com/openimis/openimis-fe-individual_js.git#release/26.10"
+            "npm": "@openimis/fe-individual@https://github.com/etsebo-zm-nsr/openimis-fe-individual_js.git#zm/develop"
         },
         {
             "name": "SocialProtectionModule",
