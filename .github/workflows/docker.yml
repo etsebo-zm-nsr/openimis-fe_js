@@ -1,23 +1,72 @@
+# Daily (and optionally on-push) frontend image.
+#
+# With no repository variables set this behaves as before: build `develop` every night and
+# publish ghcr.io/<repository owner>/openimis-fe:develop. A fork (country implementation)
+# configures it through repository variables (Settings > Secrets and variables > Actions >
+# Variables), all optional:
+#
+#   IMAGE_REGISTRY       registry host                      default ghcr.io
+#   IMAGE_NAMESPACE      registry namespace                 default the repository owner
+#   IMAGE_NAME           image name                         default openimis-fe
+#   IMAGE_BUILD_BRANCH   branch the image is built from     default develop
+#   IMAGE_TAG            tag for that build                 default the branch, "/" -> "-"
+#   IMAGE_BUILD_ON_PUSH  "true" also builds on every push to IMAGE_BUILD_BRANCH
+#   IMAGE_TAG_SHA        "true" also tags the short commit sha
+#
+# Example (a fork working on zm/develop): IMAGE_BUILD_BRANCH=zm/develop and
+# IMAGE_BUILD_ON_PUSH=true publish ghcr.io/<owner>/openimis-fe:zm-develop.
+# Push triggers cannot read variables, so the trigger covers develop and */develop and the
+# job checks the configured branch.
 name: Create daily Docker image on develop
 on:
   workflow_dispatch:
   schedule:
    - cron: "0 2 * * *"
+  push:
+    branches:
+      - develop
+      - '*/develop'
+
+concurrency:
+  group: docker-image-${{ github.workflow }}
+  cancel-in-progress: true
+
 jobs:
   publish-docker-develop-image:
+    if: >-
+      github.event_name != 'push' ||
+      (vars.IMAGE_BUILD_ON_PUSH == 'true' && github.ref_name == (vars.IMAGE_BUILD_BRANCH || 'develop'))
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      REGISTRY: ${{ vars.IMAGE_REGISTRY || 'ghcr.io' }}
+      NAMESPACE: ${{ vars.IMAGE_NAMESPACE || github.repository_owner }}
+      IMAGE_NAME: ${{ vars.IMAGE_NAME || 'openimis-fe' }}
+      BUILD_BRANCH: ${{ vars.IMAGE_BUILD_BRANCH || 'develop' }}
+      IMAGE_TAG: ${{ vars.IMAGE_TAG }}
+      TAG_SHA: ${{ vars.IMAGE_TAG_SHA }}
     steps:
     - uses: actions/checkout@v4
       with:
-        ref: develop
-    - name: Login to GitHub Container Registry
+        ref: ${{ env.BUILD_BRANCH }}
+    - name: Login to the container registry
       uses: docker/login-action@v3
       with:
-        registry: ghcr.io
+        registry: ${{ env.REGISTRY }}
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
     - name: Building the openIMIS Frontend Docker image
       run: |
-         LABEL=develop
-         docker build . --tag ghcr.io/openimis/openimis-fe:${LABEL}
-         docker push ghcr.io/openimis/openimis-fe:${LABEL}
+         # Image references must be lower case; a tag allows only [A-Za-z0-9_.-].
+         IMAGE=$(printf '%s/%s/%s' "$REGISTRY" "$NAMESPACE" "$IMAGE_NAME" | tr '[:upper:]' '[:lower:]')
+         LABEL=${IMAGE_TAG:-$(printf '%s' "$BUILD_BRANCH" | tr -c 'A-Za-z0-9_.-' '-' | sed -E 's/^[.-]+//' | cut -c1-128)}
+         echo "Building ${IMAGE}:${LABEL} from ${BUILD_BRANCH}"
+         docker build . --tag ${IMAGE}:${LABEL}
+         docker push ${IMAGE}:${LABEL}
+         if [ "$TAG_SHA" = "true" ]; then
+           SHA=$(git rev-parse --short HEAD)
+           docker tag ${IMAGE}:${LABEL} ${IMAGE}:${SHA}
+           docker push ${IMAGE}:${SHA}
+         fi
