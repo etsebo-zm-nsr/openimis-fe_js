@@ -1,9 +1,15 @@
-name: create manual docker image 
+# Manual frontend image: build the branch the workflow is run from (or `ref`) and publish it
+# under `tag`. Publishes to ghcr.io/<repository owner>/openimis-fe unless the repository
+# variables IMAGE_REGISTRY, IMAGE_NAMESPACE or IMAGE_NAME say otherwise (see docker.yml).
+name: create manual docker image
 on:
   workflow_dispatch:
     inputs:
       tag:
         required: true
+      ref:
+        description: 'Branch or tag to build (default: the branch the workflow is run from)'
+        required: false
       build_mode:
         description: 'Build mode (prod for minified, dev for unminified)'
         required: false
@@ -18,26 +24,43 @@ on:
 jobs:
   publish-manual-docker-image:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    env:
+      REGISTRY: ${{ vars.IMAGE_REGISTRY || 'ghcr.io' }}
+      NAMESPACE: ${{ vars.IMAGE_NAMESPACE || github.repository_owner }}
+      IMAGE_NAME: ${{ vars.IMAGE_NAME || 'openimis-fe' }}
+      RAW_TAG: ${{ inputs.tag }}
     steps:
     - uses: actions/checkout@v4
-    - name: Login to GitHub Container Registry
+      with:
+        ref: ${{ inputs.ref }}
+    - name: Login to the container registry
       uses: docker/login-action@v3
       with:
-        registry: ghcr.io
+        registry: ${{ env.REGISTRY }}
         username: ${{ github.actor }}
         password: ${{ secrets.GITHUB_TOKEN }}
     - name: Download custom openimis.json
       if: ${{ inputs.file_url != '' }}
+      env:
+        FILE_URL: ${{ inputs.file_url }}
       run: |
-          curl -o ./openimis.json ${{ inputs.file_url }}
+          curl -fsSL -o ./openimis.json "$FILE_URL"
     - name: Set build mode
       run: |
-        if [ "${{ github.event.inputs.build_mode }}" = "dev" ]; then
+        if [ "${{ inputs.build_mode }}" = "dev" ]; then
           echo "MODE=development" >> $GITHUB_ENV
         else
           echo "MODE=production" >> $GITHUB_ENV
         fi
     - name: Build the openimis frontend Docker image
       run: |
-         docker build . --no-cache --build-arg MODE=$MODE --tag ghcr.io/openimis/openimis-fe:${{ github.event.inputs.tag }}
-         docker push ghcr.io/openimis/openimis-fe:${{ github.event.inputs.tag }}
+         IMAGE=$(printf '%s/%s/%s' "$REGISTRY" "$NAMESPACE" "$IMAGE_NAME" | tr '[:upper:]' '[:lower:]')
+         # A tag allows only [A-Za-z0-9_.-], no leading '.' or '-', at most 128 characters.
+         TAG=$(printf '%s' "$RAW_TAG" | tr -c 'A-Za-z0-9_.-' '-' | sed -E 's/^[.-]+//' | cut -c1-128)
+         if [ -z "$TAG" ]; then echo "::error::tag is empty after sanitising '$RAW_TAG'"; exit 1; fi
+         echo "Building ${IMAGE}:${TAG}"
+         docker build . --no-cache --build-arg MODE=$MODE --tag ${IMAGE}:${TAG}
+         docker push ${IMAGE}:${TAG}
