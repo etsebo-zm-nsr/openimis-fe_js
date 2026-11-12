@@ -17,6 +17,10 @@
 # IMAGE_BUILD_ON_PUSH=true publish ghcr.io/<owner>/openimis-fe:zm-develop.
 # Push triggers cannot read variables, so the trigger covers develop and */develop and the
 # job checks the configured branch.
+#
+# Outside the openimis organisation the nightly build only runs once IMAGE_BUILD_BRANCH is
+# set, so a fork that has not been configured does not publish its copy of upstream
+# `develop` under its own name every night. Manual runs are always allowed.
 name: Create daily Docker image on develop
 on:
   workflow_dispatch:
@@ -34,8 +38,11 @@ concurrency:
 jobs:
   publish-docker-develop-image:
     if: >-
-      github.event_name != 'push' ||
-      (vars.IMAGE_BUILD_ON_PUSH == 'true' && github.ref_name == (vars.IMAGE_BUILD_BRANCH || 'develop'))
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'schedule' &&
+      (github.repository_owner == 'openimis' || vars.IMAGE_BUILD_BRANCH != '')) ||
+      (github.event_name == 'push' && vars.IMAGE_BUILD_ON_PUSH == 'true' &&
+      github.ref_name == (vars.IMAGE_BUILD_BRANCH || 'develop'))
     runs-on: ubuntu-latest
     permissions:
       contents: read
