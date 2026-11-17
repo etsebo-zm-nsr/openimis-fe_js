@@ -12,11 +12,20 @@ jobs:
   sonarcloud:
     name: SonarCloud
     runs-on: ubuntu-latest
+    env:
+      # Secrets cannot be used in `if:` directly. Forks and pull requests from forks
+      # have no SONAR_TOKEN, so the scan is skipped there instead of failing.
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
     steps:
+      - name: Skip when SONAR_TOKEN is not configured
+        if: env.SONAR_TOKEN == ''
+        run: echo "::notice title=SonarCloud skipped::SONAR_TOKEN is not available in this repository or event, so the scan did not run."
       - uses: actions/checkout@v3
+        if: env.SONAR_TOKEN != ''
         with:
           fetch-depth: 0
       - name: SonarCloud Scan
+        if: env.SONAR_TOKEN != ''
         uses: SonarSource/sonarcloud-github-action@master
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
